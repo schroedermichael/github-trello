@@ -2,28 +2,45 @@ require "json"
 require "sinatra/base"
 require "github-trello/version"
 require "github-trello/http"
+require "faraday"
 
 module GithubTrello
   class Server < Sinatra::Base
     post "/posthook" do
       config, http = self.class.config, self.class.http
+      request.body.rewind
+      payload = JSON.parse(request.body.read)#(params[:payload])
+      commit_url = payload["pull_request"]["commits_url"]
+      if !payload["pull_request"]["merged"]
+        return
+      end
+      conn = Faraday.new(:url => commit_url) do |faraday|
+        faraday.request :url_encoded
+        faraday.adapter Faraday.default_adapter
+      end
+      user = "schroedermichael"
+      password = "9ae904ddf5613cdbb20d25f5c0583b5585845288"
+      conn.basic_auth user, password
+      response = conn.get ''
+      commits = JSON.parse(response.body)
 
-      payload = JSON.parse(params[:payload])
+
 
       board_id = config["board_ids"][payload["repository"]["name"]]
       unless board_id
         puts "[ERROR] Commit from #{payload["repository"]["name"]} but no board_id entry found in config"
         return
       end
-
-      branch = payload["ref"].gsub("refs/heads/", "")
+      branch = payload["pull_request"]["head"]["ref"]
+      #branch = payload["ref"].gsub("refs/heads/", "")
       if config["blacklist_branches"] and config["blacklist_branches"].include?(branch)
         return
       elsif config["whitelist_branches"] and !config["whitelist_branches"].include?(branch)
         return
       end
-
-      payload["commits"].each do |commit|
+      commits.each do |commit_object|
+        commit = commit_object["commit"]
+     # payload["commits"].each do |commit|
         # Figure out the card short id
         match = commit["message"].match(/((case|card|close|archive|fix)e?s? \D?([0-9]+))/i)
         next unless match and match[3].to_i > 0
